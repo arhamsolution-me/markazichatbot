@@ -1,0 +1,30 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables & secrets (CRITICAL: Never commit .env)
+.env
+.env*.local
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local Vector Database & runtime data
+data/qdrant/
+data/_tmp_restore/
+data/_restore/
+state/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
