@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 ENV_PATH = BASE_DIR / ".env"
+if not ENV_PATH.exists():
+    ENV_PATH = BASE_DIR.parent / ".env"
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH, override=True)
 

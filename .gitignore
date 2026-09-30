@@ -6,6 +6,7 @@ env/
 
 # Environment variables & secrets (CRITICAL: Never commit .env)
 .env
+**/.env
 .env*.local
 
 # Python bytecode and caches
@@ -17,6 +18,7 @@ __pycache__/
 
 # Local Vector Database & runtime data
 data/qdrant/
+**/data/qdrant/
 data/_tmp_restore/
 data/_restore/
 state/

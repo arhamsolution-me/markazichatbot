@@ -12,7 +12,7 @@ Yeh document Markazi AI Chatbot backend ki tamam APIs ki mukammal tafseel, unka 
 | `POST` | `/api/chat/stream` | Real-Time Streaming Chat (Typewriter effect + Pipeline stages) | SSE (`text/event-stream`) |
 | `GET` | `/api/stats` | System Health, Multi-Database Schemas aur Model Stats | JSON |
 | `POST` | `/api/sync` | Manual Database Entities Sync to Vector DB (Qdrant) | JSON |
-| `GET` | `/` | Web UI Static Frontend (HTML, CSS, JS) | HTML |
+| `GET` | `/` | Microservice Health & Status Endpoint | JSON |
 
 ---
 
@@ -179,5 +179,13 @@ Yeh document Markazi AI Chatbot backend ki tamam APIs ki mukammal tafseel, unka 
 
 ### 5. `GET /`
 * **Matlab / Maqsad (Purpose):**
-  * Frontend dashboard ko serve karta hai.
-  * Jab aap browser mein `http://localhost:8000/` kholte hain, yeh `static/` directory se `index.html`, style sheets aur frontend scripts load kar ke mukammal chat interface open karta hai.
+  * Microservice root health & status endpoint.
+  * API gateway ya load balancers ko microservice ki availability check karne ke liye live JSON response faraham karta hai.
+* **Response (JSON):**
+  ```json
+  {
+    "service": "Markazi AI Chatbot Core Microservice",
+    "status": "healthy",
+    "version": "1.0.0"
+  }
+  ```

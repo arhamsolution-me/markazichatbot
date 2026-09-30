@@ -6,7 +6,6 @@ import json
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from app.config import settings
 from app.db import db_manager
@@ -176,9 +175,13 @@ async def trigger_sync():
     await sync_worker.initial_sync()
     return {"status": "success", "message": "Entities re-synchronized with Vector Store."}
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
-if STATIC_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+@app.get("/")
+async def root():
+    return {
+        "service": "Markazi AI Chatbot Core Microservice",
+        "status": "healthy",
+        "version": "1.0.0"
+    }
 
 if __name__ == "__main__":
     import os

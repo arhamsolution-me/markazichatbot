@@ -46,8 +46,10 @@ def parse_db_url(url: str) -> dict:
 
 def find_dump_file(prefix: str) -> Path:
     matches = list(ROOT.glob(f"{prefix}*.sql"))
+    if not matches and ROOT.parent.exists():
+        matches = list(ROOT.parent.glob(f"{prefix}*.sql"))
     if not matches:
-        raise FileNotFoundError(f"Could not find any SQL dump matching pattern '{prefix}*.sql' in {ROOT}")
+        raise FileNotFoundError(f"Could not find any SQL dump matching pattern '{prefix}*.sql' in {ROOT} or {ROOT.parent}")
     matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return matches[0]
 
