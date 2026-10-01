@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment files & secrets
+.env
+.env.*
+!.env.example
+
+# Database dumps (exclude ~20MB SQL dumps from build context)
+*.sql
+backend/*.sql
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local Vector Database and runtime data
+data/
+backend/data/
+state/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
