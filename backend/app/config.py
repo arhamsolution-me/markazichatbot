@@ -10,25 +10,21 @@ if not ENV_PATH.exists():
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH, override=True)
 
-class Settings:
-    RAW_DB_URL: str = os.getenv(
-        "MARKAZI_DB_URL",
-        "postgresql://dbadmin:dbadmin@127.0.0.1:5432/markazi_qa_is",
-    )
-    DB_URL: str = RAW_DB_URL.replace("postgresql+psycopg://", "postgresql://")
+POSTGRES_PREFIX = "postgresql://"
+POSTGRES_PSYCOPG_PREFIX = "postgresql+psycopg://"
 
-    US_DB_URL: str = os.getenv(
-        "MARKAZI_US_DB_URL",
-        "postgresql://dbadmin:dbadmin@127.0.0.1:5432/markazi_qa_us",
-    ).replace("postgresql+psycopg://", "postgresql://")
-    LS_DB_URL: str = os.getenv(
-        "MARKAZI_LS_DB_URL",
-        "postgresql://dbadmin:dbadmin@127.0.0.1:5432/markazi_qa_ls",
-    ).replace("postgresql+psycopg://", "postgresql://")
-    IS_DB_URL: str = os.getenv(
-        "MARKAZI_IS_DB_URL",
-        DB_URL,
-    ).replace("postgresql+psycopg://", "postgresql://")
+
+def _normalize_db_url(url: str) -> str:
+    return url.replace(POSTGRES_PSYCOPG_PREFIX, POSTGRES_PREFIX) if url else ""
+
+
+class Settings:
+    RAW_DB_URL: str = os.getenv("MARKAZI_DB_URL", "")
+    DB_URL: str = _normalize_db_url(RAW_DB_URL)
+
+    US_DB_URL: str = _normalize_db_url(os.getenv("MARKAZI_US_DB_URL", ""))
+    LS_DB_URL: str = _normalize_db_url(os.getenv("MARKAZI_LS_DB_URL", ""))
+    IS_DB_URL: str = _normalize_db_url(os.getenv("MARKAZI_IS_DB_URL", DB_URL))
     
     DB_MIN_CONNECTIONS: int = int(os.getenv("DB_MIN_CONNECTIONS", "2"))
     DB_MAX_CONNECTIONS: int = int(os.getenv("DB_MAX_CONNECTIONS", "20"))

@@ -201,15 +201,20 @@ def verify_databases(conn_info: dict) -> bool:
         print(f"[FAIL] Verification failed: {e}")
         return False
 
+SECTION_DIVIDER = "=" * 50
+
+
 def main():
-    print("==================================================")
+    print(SECTION_DIVIDER)
     print("Markazi Automated Multi-Database Migration & Setup")
-    print("==================================================")
+    print(SECTION_DIVIDER)
     
     psql_bin = find_psql()
     print(f"Using PSQL binary: {psql_bin}")
 
-    raw_url = os.getenv("MARKAZI_DB_URL", "postgresql://dbadmin:dbadmin@127.0.0.1:5432/markazi_qa_is")
+    raw_url = os.getenv("MARKAZI_DB_URL", "")
+    if not raw_url:
+        raise ValueError("MARKAZI_DB_URL environment variable must be set.")
     conn_info = parse_db_url(raw_url)
     print(f"Target PostgreSQL: host={conn_info['host']}, port={conn_info['port']}, user={conn_info['user']}")
 
@@ -238,10 +243,10 @@ def main():
 
         success = verify_databases(conn_info)
         if success:
-            print("\n==================================================")
+            print(f"\n{SECTION_DIVIDER}")
             print("ALL DATABASES CREATED, RESTORED, AND LINKED!")
             print("Chatbot is ready to run: python run_server.py")
-            print("==================================================")
+            print(SECTION_DIVIDER)
         else:
             print("\nSetup finished with verification warnings. Check logs above.")
 

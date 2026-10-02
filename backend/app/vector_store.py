@@ -99,17 +99,15 @@ class VectorStore:
         self.client.upsert(collection_name=COLLECTION_SCHEMA, points=points)
         logger.info(f"Dynamically indexed {len(points)} multi-service tables into '{COLLECTION_SCHEMA}'.")
 
-    def search_relevant_tables(self, query: str, top_k: int = 30) -> list[str]:
-        matched_tables: list[str] = []
-        catalog = catalog_manager.get_catalog()
-        q_lower = query.lower()
+    def _match_by_catalog_keywords(self, catalog: dict[str, Any], q_lower: str) -> list[str]:
+        matched: list[str] = []
         for t_name, info in catalog.items():
             short_name = info.get("table_name", t_name)
-            if short_name in matched_tables:
+            if short_name in matched:
                 continue
 
             if t_name.lower() in q_lower or info.get("quoted_name", "").strip('"').lower() in q_lower:
-                matched_tables.append(short_name)
+                matched.append(short_name)
                 continue
 
             synonyms_str = info.get("synonyms", "")
@@ -117,9 +115,12 @@ class VectorStore:
                 syn_list = [s.strip().lower() for s in synonyms_str.split(",") if len(s.strip()) > 2]
                 for syn in syn_list:
                     if syn in q_lower or (len(syn) > 4 and syn[:-1] in q_lower):
-                        matched_tables.append(short_name)
+                        matched.append(short_name)
                         break
+        return matched
 
+    def _match_by_vector_search(self, query: str, top_k: int) -> list[str]:
+        matched: list[str] = []
         try:
             vector = self._get_embedding(query)
             try:
@@ -137,18 +138,33 @@ class VectorStore:
 
             for hit in results:
                 tbl = hit.payload.get("table_name")
-                if tbl and tbl not in matched_tables:
-                    matched_tables.append(tbl)
+                if tbl and tbl not in matched:
+                    matched.append(tbl)
         except Exception as e:
             logger.warning(f"Semantic schema search fallback error: {e}")
+        return matched
 
-        dynamic_deps = catalog_manager.get_dependencies()
-        expanded = list(matched_tables)
+    def _expand_dependencies(self, tables: list[str], dynamic_deps: dict[str, list[str]]) -> list[str]:
+        expanded = list(tables)
         for _ in range(2):
-            for tbl in list(expanded):
+            snapshot = tuple(expanded)
+            for tbl in snapshot:
                 for dep in dynamic_deps.get(tbl, []):
                     if dep not in expanded:
                         expanded.append(dep)
+        return expanded
+
+    def search_relevant_tables(self, query: str, top_k: int = 30) -> list[str]:
+        catalog = catalog_manager.get_catalog()
+        q_lower = query.lower()
+        matched_tables = self._match_by_catalog_keywords(catalog, q_lower)
+
+        for tbl in self._match_by_vector_search(query, top_k):
+            if tbl not in matched_tables:
+                matched_tables.append(tbl)
+
+        dynamic_deps = catalog_manager.get_dependencies()
+        expanded = self._expand_dependencies(matched_tables, dynamic_deps)
 
         if not expanded:
             expanded = ["order", "order_item", "product", "product_variant", "stock", "location", "users", "roles", "license"]

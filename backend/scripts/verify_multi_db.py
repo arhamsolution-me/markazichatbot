@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env", override=True)
 
-raw_url = os.getenv("MARKAZI_DB_URL", "postgresql://dbadmin:dbadmin@127.0.0.1:5432/markazi_qa_is")
+raw_url = os.getenv("MARKAZI_DB_URL", "")
+if not raw_url:
+    raise ValueError("MARKAZI_DB_URL environment variable must be set.")
 dsn = raw_url.replace("postgresql+psycopg://", "postgresql://")
 
 with psycopg.connect(dsn) as conn:

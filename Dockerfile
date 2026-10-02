@@ -13,7 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install OS packages and apply available security updates
+# Install OS packages, apply security updates, and prepare application directories
 USER 0
 RUN microdnf update -y && \
     microdnf install -y \
@@ -21,10 +21,8 @@ RUN microdnf update -y && \
         ca-certificates \
         libgomp \
         --setopt=install_weak_deps=0 && \
-    microdnf clean all
-
-# Prepare application directories for the non-root user
-RUN mkdir -p /app/data/qdrant /app/models/fastembed_cache && \
+    microdnf clean all && \
+    mkdir -p /app/data/qdrant /app/models/fastembed_cache && \
     chown -R 1001:0 /app && \
     chmod -R g=u /app
 
@@ -32,10 +30,7 @@ RUN mkdir -p /app/data/qdrant /app/models/fastembed_cache && \
 COPY --chown=1001:0 backend/requirements.txt /app/requirements.txt
 
 USER 0
-# Upgrade pip/build tools and pin security-fixed versions for Trivy findings:
-#   setuptools >=83.0.0  (CVE-2025-47273 HIGH, CVE-2026-59890 MEDIUM)
-#   msgpack    >=1.2.1   (GHSA-6v7p-g79w-8964 HIGH)
-#   urllib3    >=2.8.0   (CVE-2026-97687 HIGH, CVE-2026-97688 MEDIUM, CVE-2026-97689 HIGH)
+# Upgrade pip/build tools, pin security-fixed versions, install dependencies, and give user access
 RUN python -m pip install --no-cache-dir --upgrade \
         pip \
         "setuptools>=83.0.0" \
@@ -44,10 +39,8 @@ RUN python -m pip install --no-cache-dir --upgrade \
     python -m pip install --no-cache-dir --upgrade \
         "msgpack>=1.2.1" \
         "urllib3>=2.8.0" \
-        "setuptools>=83.0.0"
-
-# Give the application user access to the installed packages and app files
-RUN chown -R 1001:0 /app
+        "setuptools>=83.0.0" && \
+    chown -R 1001:0 /app
 
 USER 1001
 

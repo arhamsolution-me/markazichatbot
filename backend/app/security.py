@@ -13,7 +13,7 @@ FORBIDDEN_EXPRESSIONS = (
     exp.TruncateTable,
 )
 
-def validate_and_sanitize_sql(sql: str, default_limit: int = 100) -> Tuple[bool, str, str]:
+def validate_and_sanitize_sql(sql: str) -> Tuple[bool, str, str]:
     cleaned = sql.strip().rstrip(";")
     if not cleaned:
         return False, "", "Empty SQL query."

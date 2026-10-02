@@ -12,36 +12,39 @@ from app.llm_rotator import llm_client
 
 logger = logging.getLogger("agent.core")
 
-def build_sql_error_diagnostic(err_str: str, current_sql: str) -> str:
-    """Dynamically inspects PostgreSQL errors and injects exact introspected table/column guidance."""
-    diagnostics = []
-    
-    if "UndefinedColumn" in err_str or "does not exist" in err_str:
-        col_match = re.search(r'column [\"\\\']?([a-zA-Z0-9_\.]+)[\"\\\']? does not exist', err_str)
-        if col_match:
-            missing = col_match.group(1)
-            diagnostics.append(f"- Database Error: Column '{missing}' DOES NOT EXIST in the referenced table.")
-        
-        catalog = catalog_manager.get_catalog()
-        sql_lower = current_sql.lower()
-        for t_name, info in catalog.items():
-            short_tbl = info.get("table_name", t_name)
-            if short_tbl.lower() in sql_lower:
-                real_cols = catalog_manager.get_columns_for_table(short_tbl)
-                if real_cols:
-                    diagnostics.append(f"- Real valid columns for '{short_tbl}': {real_cols}")
+def _diagnose_column_error(err_str: str, current_sql: str) -> list[str]:
+    advice = []
+    if "UndefinedColumn" not in err_str and "does not exist" not in err_str:
+        return advice
+    col_match = re.search(r'column [\"\\\']?([a-zA-Z0-9_\.]+)[\"\\\']? does not exist', err_str)
+    if col_match:
+        missing = col_match.group(1)
+        advice.append(f"- Database Error: Column '{missing}' DOES NOT EXIST in the referenced table.")
+    catalog = catalog_manager.get_catalog()
+    sql_lower = current_sql.lower()
+    for t_name, info in catalog.items():
+        short_tbl = info.get("table_name", t_name)
+        if short_tbl.lower() in sql_lower:
+            real_cols = catalog_manager.get_columns_for_table(short_tbl)
+            if real_cols:
+                advice.append(f"- Real valid columns for '{short_tbl}': {real_cols}")
+    return advice
 
+def _diagnose_syntax_errors(err_str: str) -> list[str]:
+    advice = []
     if "operator does not exist: text ->>" in err_str or ("operator does not exist" in err_str and "->" in err_str):
-        diagnostics.append("- In PostgreSQL, column data type is TEXT. You MUST cast it: CAST(col AS json) ->> 'field' or col::json ->> 'field'.")
-
+        advice.append("- In PostgreSQL, column data type is TEXT. You MUST cast it: CAST(col AS json) ->> 'field' or col::json ->> 'field'.")
     if "UndefinedTable" in err_str:
         tbl_match = re.search(r'relation [\"\\\']?([a-zA-Z0-9_\.]+)[\"\\\']? does not exist', err_str)
         if tbl_match:
-            diagnostics.append(f"- Table '{tbl_match.group(1)}' does not exist. Remember multi-service schemas: qualify with 'public.<name>', 'us.<name>', or 'ls.<name>'.")
-
+            advice.append(f"- Table '{tbl_match.group(1)}' does not exist. Remember multi-service schemas: qualify with 'public.<name>', 'us.<name>', or 'ls.<name>'.")
     if "must appear in the GROUP BY clause" in err_str:
-        diagnostics.append("- Every non-aggregated column in the SELECT list must appear in the GROUP BY clause.")
+        advice.append("- Every non-aggregated column in the SELECT list must appear in the GROUP BY clause.")
+    return advice
 
+def build_sql_error_diagnostic(err_str: str, current_sql: str) -> str:
+    """Dynamically inspects PostgreSQL errors and injects exact introspected table/column guidance."""
+    diagnostics = _diagnose_column_error(err_str, current_sql) + _diagnose_syntax_errors(err_str)
     if diagnostics:
         return "DIAGNOSTIC ADVICE FROM DATABASE CATALOG:\n" + "\n".join(diagnostics)
     return ""
@@ -141,55 +144,61 @@ def compute_data_summary(rows: list[dict], columns: list[str]) -> dict:
             }
     return {"total_count": len(rows), "stats": stats}
 
+def _is_id_column(col: str) -> bool:
+    c = col.lower()
+    return c in ("id", "sourceid", "source_id") or c.endswith("id")
+
+def _find_label_column(rows: list[dict], columns: list[str]) -> Optional[str]:
+    for col in columns:
+        if _is_id_column(col):
+            continue
+        sample_vals = [r.get(col) for r in rows[:5] if r.get(col) is not None]
+        if sample_vals and all(isinstance(v, str) for v in sample_vals):
+            return col
+    for col in columns:
+        sample_vals = [r.get(col) for r in rows[:5] if r.get(col) is not None]
+        if sample_vals and all(isinstance(v, str) for v in sample_vals):
+            return col
+    return None
+
+def _find_numeric_column(rows: list[dict], columns: list[str]) -> Optional[str]:
+    for col in columns:
+        if _is_id_column(col):
+            continue
+        sample_vals = [r.get(col) for r in rows[:5] if r.get(col) is not None]
+        if sample_vals and all(isinstance(v, (int, float)) for v in sample_vals):
+            return col
+    return None
+
+def _determine_chart_type(label_col: str, row_count: int) -> str:
+    lbl_lower = label_col.lower()
+    time_terms = ("month", "date", "day", "created", "time", "year")
+    if any(term in lbl_lower for term in time_terms):
+        return "line"
+    category_terms = ("status", "type", "channel")
+    if row_count <= 5 and any(term in lbl_lower for term in category_terms):
+        return "doughnut"
+    return "bar"
+
 def extract_chart_data(rows: list[dict], columns: list[str]) -> Optional[dict]:
     """Automatically constructs visual chart parameters (bar, line, doughnut) for comparative or time-series data."""
     if len(rows) < 2:
         return None
-    label_col = None
-    numeric_col = None
+    label_col = _find_label_column(rows, columns)
+    numeric_col = _find_numeric_column(rows, columns)
+    if not (label_col and numeric_col):
+        return None
 
-    for col in columns:
-        if col.lower() in ("id", "sourceid", "source_id") or col.lower().endswith("id"):
-            continue
-        sample_vals = [r.get(col) for r in rows[:5] if r.get(col) is not None]
-        if sample_vals and all(isinstance(v, str) for v in sample_vals):
-            label_col = col
-            break
-
-    for col in columns:
-        if col.lower() in ("id", "sourceid", "source_id") or col.lower().endswith("id"):
-            continue
-        sample_vals = [r.get(col) for r in rows[:5] if r.get(col) is not None]
-        if sample_vals and all(isinstance(v, (int, float)) for v in sample_vals):
-            numeric_col = col
-            break
-
-    if not label_col:
-        for col in columns:
-            sample_vals = [r.get(col) for r in rows[:5] if r.get(col) is not None]
-            if sample_vals and all(isinstance(v, str) for v in sample_vals):
-                label_col = col
-                break
-
-    if label_col and numeric_col:
-        chart_rows = rows[:100]
-        labels = [str(r.get(label_col, '')) for r in chart_rows]
-        data = [float(r.get(numeric_col) or 0) for r in chart_rows]
-        chart_type = "bar"
-        if any(term in label_col.lower() for term in ["month", "date", "day", "created", "time", "year"]):
-            chart_type = "line"
-        elif len(chart_rows) <= 5 and any(term in label_col.lower() for term in ["status", "type", "channel"]):
-            chart_type = "doughnut"
-
-        return {
-            "type": chart_type,
-            "title": f"{numeric_col.replace('_', ' ').title()} by {label_col.replace('_', ' ').title()}",
-            "labels": labels,
-            "label_name": label_col,
-            "value_name": numeric_col,
-            "data": data
-        }
-    return None
+    chart_rows = rows[:100]
+    chart_type = _determine_chart_type(label_col, len(chart_rows))
+    return {
+        "type": chart_type,
+        "title": f"{numeric_col.replace('_', ' ').title()} by {label_col.replace('_', ' ').title()}",
+        "labels": [str(r.get(label_col, '')) for r in chart_rows],
+        "label_name": label_col,
+        "value_name": numeric_col,
+        "data": [float(r.get(numeric_col) or 0) for r in chart_rows]
+    }
 
 def build_synthesis_prompt(user_question: str, serialized_rows: list[dict], data_summary: dict, history: Optional[list[dict]]) -> str:
     total_count = len(serialized_rows)
@@ -232,7 +241,208 @@ INSTRUCTIONS FOR ANSWER:
 {instruction_text}
 - Speak like a helpful human business specialist. Do NOT output raw SQL code, raw unformatted column names, or markdown pipe tables."""
 
+class QueryContext:
+    def __init__(
+        self,
+        relevant_tables: list[str],
+        matched_entities: list[dict],
+        schema_context: str,
+        user_prompt: str,
+        messages: list[dict[str, str]],
+    ):
+        self.relevant_tables = relevant_tables
+        self.matched_entities = matched_entities
+        self.schema_context = schema_context
+        self.user_prompt = user_prompt
+        self.messages = messages
+
+DEFAULT_FALLBACK_REPLY = (
+    "Main aapka sawal samajh nahi paya ya mutaliqa data nahi mil saka. "
+    "Barah-e-karam apna sawal thora wazeh karein ya dobara poochiye."
+)
+
+def _select_schema_tables(relevant_tables: list[str]) -> list[str]:
+    selected_tables = []
+    for t in relevant_tables:
+        info = TABLE_CATALOG.get(t)
+        t_name = info.get("table_name", t) if info else t
+        if t_name not in selected_tables:
+            selected_tables.append(t_name)
+
+    core_fallback = ["order", "order_item", "product", "product_variant", "stock", "location", "users", "roles", "license"]
+    for c in core_fallback:
+        if len(selected_tables) >= 8:
+            break
+        if c not in selected_tables and c in TABLE_CATALOG:
+            selected_tables.append(c)
+    return selected_tables[:8]
+
+def _format_entity_context(matched_entities: list[dict]) -> str:
+    if not matched_entities:
+        return ""
+    return "Matched Database Entities:\n" + "\n".join(
+        [f"- {e['type'].upper()} '{e['name']}' (ID: {e['id']})" for e in matched_entities]
+    )
+
+def _format_history_context(history: Optional[list[dict]]) -> str:
+    if not history:
+        return ""
+    clean_history = [
+        h for h in history[-6:]
+        if isinstance(h, dict) and h.get("content") and h.get("role") in ("user", "assistant")
+    ]
+    if not clean_history:
+        return ""
+    turns = []
+    for h in clean_history:
+        turn_str = f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content'][:250]}"
+        if h.get("sql"):
+            turn_str += f"\n  [Executed SQL]: {h['sql']}"
+        turns.append(turn_str)
+    return "Recent Conversation History:\n" + "\n".join(turns) + "\n"
+
+def _build_query_context(user_question: str, history: Optional[list[dict]] = None) -> QueryContext:
+    relevant_tables = vector_store.search_relevant_tables(user_question, top_k=8)
+    matched_entities = vector_store.search_entities(user_question, top_k=8)
+
+    selected_tables = _select_schema_tables(relevant_tables)
+    schema_context = get_table_schema_prompt(selected_tables)
+    entity_context = _format_entity_context(matched_entities)
+    history_context = _format_history_context(history)
+
+    user_prompt = f"""Available Database Schema Context:
+{schema_context}
+
+{entity_context}
+
+{history_context}
+Current User Input: "{user_question}"
+
+INSTRUCTIONS:
+1. If this is a greeting or general inquiry, respond conversationally.
+2. If this is a data question, generate the PostgreSQL query in ```sql ... ```.
+3. If this is a follow-up to a previous question, reuse or extend the previous [Executed SQL]."""
+
+    messages = [
+        {"role": "system", "content": UNIVERSAL_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt}
+    ]
+    return QueryContext(relevant_tables, matched_entities, schema_context, user_prompt, messages)
+
+def _build_failure_message(err_str: str, ctx: QueryContext) -> str:
+    table_summary = ", ".join(ctx.relevant_tables[:4]) if ctx.relevant_tables else "database"
+    return (
+        f"Database query execute nahi ho saki: {err_str}.\n\n"
+        f"**Suggestions:**\n"
+        f"- Mutaliqa tables ({table_summary}) mein requested fields direct match nahi huin.\n"
+        f"- Aap specific filters (e.g. warehouse name, specific SKU ya date range) mention kar ke dobara pooch sakte hain."
+    )
+
+def _format_conversational_response(reply_text: str, ctx: QueryContext) -> dict[str, Any]:
+    return {
+        "answer": reply_text,
+        "sql": "",
+        "columns": [],
+        "rows": [],
+        "row_count": 0,
+        "duration_ms": 0,
+        "relevant_tables": ctx.relevant_tables,
+        "entities": ctx.matched_entities,
+        "chart": None,
+        "error": None
+    }
+
+def _format_security_error_response(sql_to_run: str, error_msg: str, ctx: QueryContext) -> dict[str, Any]:
+    return {
+        "answer": f"Query could not be executed due to security rules: {error_msg}",
+        "sql": sql_to_run,
+        "columns": [],
+        "rows": [],
+        "row_count": 0,
+        "duration_ms": 0,
+        "relevant_tables": ctx.relevant_tables,
+        "entities": ctx.matched_entities,
+        "chart": None,
+        "error": error_msg
+    }
+
+def _prepare_synthesis_data(exec_result: dict, user_question: str, history: Optional[list[dict]]) -> tuple[list[dict], list[str], Optional[dict], list[dict[str, str]]]:
+    columns = exec_result.get("columns", [])
+    raw_rows = exec_result.get("rows", [])
+    serialized_rows = [{k: serialize_row(v) for k, v in row.items()} for row in raw_rows]
+    data_summary = compute_data_summary(serialized_rows, columns)
+    chart_data = extract_chart_data(serialized_rows, columns)
+    summary_prompt = build_synthesis_prompt(user_question, serialized_rows, data_summary, history)
+    synth_messages = [
+        {"role": "system", "content": SYNTHESIZE_SYSTEM_PROMPT},
+        {"role": "user", "content": summary_prompt}
+    ]
+    return serialized_rows, columns, chart_data, synth_messages
+
+async def _stream_tokens_or_fallback(synth_messages: list[dict], serialized_rows: list[dict]):
+    token_count = 0
+    async for token in llm_client.stream_chat_completion(synth_messages, temperature=0.2):
+        if token:
+            token_count += 1
+            yield {"event": "token", "data": json.dumps({"token": token})}
+
+    if token_count == 0:
+        logger.warning("Stream produced 0 tokens, falling back to direct synthesis...")
+        try:
+            fallback_answer = await llm_client.generate_chat_completion(synth_messages, temperature=0.2)
+            if fallback_answer and fallback_answer.strip():
+                yield {"event": "token", "data": json.dumps({"token": fallback_answer.strip()})}
+            else:
+                yield {"event": "token", "data": json.dumps({"token": f"Aapke sawal ke mutabiq {len(serialized_rows)} records mil gaye hain. Tafseelat Data Table aur CSV export mein mojood hain."})}
+        except Exception as synth_err:
+            logger.error(f"Fallback synthesis error: {synth_err}")
+            yield {"event": "token", "data": json.dumps({"token": f"Aapka data query kamyabi se execute ho gaya hai ({len(serialized_rows)} records). Interactive table mein check karein."})}
+
 class ChatbotAgent:
+    async def _attempt_sql_fix(self, current_sql: str, err_str: str, user_prompt: str) -> str:
+        diagnostic_hint = build_sql_error_diagnostic(err_str, current_sql)
+        hint_section = f"\n{diagnostic_hint}\n" if diagnostic_hint else ""
+        fix_prompt = (
+            f"The PostgreSQL query failed with error: {err_str}\n"
+            f"Faulty SQL: {current_sql}\n"
+            f"{hint_section}"
+            f"Fix the query using the schema provided above. "
+            f"Ensure correct table and column names, proper double quotes on identifiers, "
+            f"and remember ls.license.configuration is TEXT (use CAST(lic.configuration AS json) ->> 'key'). "
+            f"Output ONLY the corrected SQL in ```sql ... ```."
+        )
+        try:
+            fix_messages = [
+                {"role": "system", "content": UNIVERSAL_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+                {"role": "assistant", "content": f"```sql\n{current_sql}\n```"},
+                {"role": "user", "content": fix_prompt}
+            ]
+            fix_output = await llm_client.generate_chat_completion(fix_messages, temperature=0.05)
+            corrected_sql = extract_sql_query(fix_output)
+            if corrected_sql:
+                valid, sanitized_sql_fixed, _ = validate_and_sanitize_sql(corrected_sql)
+                if valid:
+                    return sanitized_sql_fixed
+        except Exception as fix_err:
+            logger.warning(f"Self-correction LLM call failed: {fix_err}")
+        return current_sql
+
+    async def _execute_sql_with_retry(self, initial_sql: str, user_prompt: str, max_retries: int = 2) -> tuple[bool, Optional[dict], str, str]:
+        current_sql = initial_sql
+        err_str = ""
+        for attempt in range(max_retries + 1):
+            try:
+                exec_result = await db_manager.execute_query(current_sql)
+                if exec_result.get("success"):
+                    return True, exec_result, current_sql, ""
+            except Exception as e:
+                err_str = str(e)
+                logger.warning(f"SQL execution error on attempt {attempt+1}: {err_str}")
+                if attempt < max_retries:
+                    current_sql = await self._attempt_sql_fix(current_sql, err_str, user_prompt)
+        return False, None, current_sql, err_str
+
     async def process_query(self, user_question: str, history: Optional[list[dict]] = None) -> dict[str, Any]:
         """
         Universal Hybrid Pipeline with Conversation History:
@@ -243,188 +453,48 @@ class ChatbotAgent:
         5. If conversational: returns friendly direct answer
         """
         logger.info(f"Processing user question: {user_question}")
+        ctx = _build_query_context(user_question, history)
 
-        relevant_tables = vector_store.search_relevant_tables(user_question, top_k=8)
-        matched_entities = vector_store.search_entities(user_question, top_k=8)
-        
-        selected_tables = []
-        for t in relevant_tables:
-            info = TABLE_CATALOG.get(t)
-            t_name = info.get("table_name", t) if info else t
-            if t_name not in selected_tables:
-                selected_tables.append(t_name)
-
-        core_fallback = ["order", "order_item", "product", "product_variant", "stock", "location", "users", "roles", "license"]
-        for c in core_fallback:
-            if len(selected_tables) >= 8:
-                break
-            if c not in selected_tables and c in TABLE_CATALOG:
-                selected_tables.append(c)
-
-        schema_context = get_table_schema_prompt(selected_tables[:8])
-        entity_context = ""
-        if matched_entities:
-            entity_context = "Matched Database Entities:\n" + "\n".join(
-                [f"- {e['type'].upper()} '{e['name']}' (ID: {e['id']})" for e in matched_entities]
-            )
-
-        history_context = ""
-        if history:
-            clean_history = [
-                h for h in history[-6:]
-                if isinstance(h, dict) and h.get("content") and h.get("role") in ("user", "assistant")
-            ]
-            if clean_history:
-                turns = []
-                for h in clean_history:
-                    turn_str = f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content'][:250]}"
-                    if h.get("sql"):
-                        turn_str += f"\n  [Executed SQL]: {h['sql']}"
-                    turns.append(turn_str)
-                history_context = "Recent Conversation History (use this to resolve follow-ups like 'them', 'these', 'un mein se', 'filter by'):\n" + "\n".join(turns) + "\n"
-
-        user_prompt = f"""Available Database Schema Context:
-{schema_context}
-
-{entity_context}
-
-{history_context}
-Current User Input: "{user_question}"
-
-INSTRUCTIONS:
-1. If this is a greeting or general inquiry, respond conversationally.
-2. If this is a data question, generate the PostgreSQL query in ```sql ... ```.
-3. If this is a follow-up to a previous question, reuse or extend the previous [Executed SQL]."""
-
-        messages = [
-            {"role": "system", "content": UNIVERSAL_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ]
-
-        llm_output = await llm_client.generate_chat_completion(messages, temperature=0.1)
+        llm_output = await llm_client.generate_chat_completion(ctx.messages, temperature=0.1)
         sql_to_run = extract_sql_query(llm_output)
 
         if not sql_to_run:
             logger.info("Model responded conversationally without SQL.")
-            reply_text = llm_output.strip() if llm_output and llm_output.strip() else (
-                "Main aapka sawal samajh nahi paya ya mutaliqa data nahi mil saka. "
-                "Barah-e-karam apna sawal thora wazeh karein ya dobara poochiye."
-            )
-            return {
-                "answer": reply_text,
-                "sql": "",
-                "columns": [],
-                "rows": [],
-                "row_count": 0,
-                "duration_ms": 0,
-                "relevant_tables": relevant_tables,
-                "entities": matched_entities,
-                "chart": None,
-                "error": None
-            }
+            reply_text = llm_output.strip() if llm_output and llm_output.strip() else DEFAULT_FALLBACK_REPLY
+            return _format_conversational_response(reply_text, ctx)
 
         is_valid, sanitized_sql, error_msg = validate_and_sanitize_sql(sql_to_run)
         if not is_valid:
+            return _format_security_error_response(sql_to_run, error_msg, ctx)
+
+        success, exec_result, final_sql, err_str = await self._execute_sql_with_retry(sanitized_sql, ctx.user_prompt, max_retries=2)
+        if not success or not exec_result:
+            fail_msg = _build_failure_message(err_str, ctx)
             return {
-                "answer": f"Query could not be executed due to security rules: {error_msg}",
-                "sql": sql_to_run,
+                "answer": fail_msg,
+                "sql": final_sql,
                 "columns": [],
                 "rows": [],
                 "row_count": 0,
                 "duration_ms": 0,
-                "relevant_tables": relevant_tables,
-                "entities": matched_entities,
+                "relevant_tables": ctx.relevant_tables,
+                "entities": ctx.matched_entities,
                 "chart": None,
-                "error": error_msg
+                "error": err_str
             }
 
-        exec_result = None
-        max_retries = 2
-        current_sql = sanitized_sql
-
-        for attempt in range(max_retries + 1):
-            try:
-                exec_result = await db_manager.execute_query(current_sql)
-                if exec_result["success"]:
-                    break
-            except Exception as e:
-                err_str = str(e)
-                logger.warning(f"SQL execution error on attempt {attempt+1}: {err_str}")
-                if attempt == max_retries:
-                    table_summary = ", ".join(relevant_tables[:4]) if relevant_tables else "database"
-                    return {
-                        "answer": (
-                            f"Database query execute nahi ho saki: {err_str}.\n\n"
-                            f"**Suggestions:**\n"
-                            f"- Mutaliqa tables ({table_summary}) mein requested fields direct match nahi huin.\n"
-                            f"- Aap specific filters (e.g. warehouse name, specific SKU ya date range) mention kar ke dobara pooch sakte hain."
-                        ),
-                        "sql": current_sql,
-                        "columns": [],
-                        "rows": [],
-                        "row_count": 0,
-                        "duration_ms": 0,
-                        "relevant_tables": relevant_tables,
-                        "entities": matched_entities,
-                        "chart": None,
-                        "error": err_str
-                    }
-                
-                diagnostic_hint = build_sql_error_diagnostic(err_str, current_sql)
-                hint_section = f"\n{diagnostic_hint}\n" if diagnostic_hint else ""
-
-                fix_prompt = (
-                    f"The PostgreSQL query failed with error: {err_str}\n"
-                    f"Faulty SQL: {current_sql}\n"
-                    f"{hint_section}"
-                    f"Fix the query using the schema provided above. "
-                    f"Ensure correct table and column names, proper double quotes on identifiers, "
-                    f"and remember ls.license.configuration is TEXT (use CAST(lic.configuration AS json) ->> 'key'). "
-                    f"Output ONLY the corrected SQL in ```sql ... ```."
-                )
-                try:
-                    fix_messages = [
-                        {"role": "system", "content": UNIVERSAL_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                        {"role": "assistant", "content": f"```sql\n{current_sql}\n```"},
-                        {"role": "user", "content": fix_prompt}
-                    ]
-                    fix_output = await llm_client.generate_chat_completion(fix_messages, temperature=0.05)
-                    corrected_sql = extract_sql_query(fix_output)
-                    if corrected_sql:
-                        valid, sanitized_sql_fixed, _ = validate_and_sanitize_sql(corrected_sql)
-                        if valid:
-                            current_sql = sanitized_sql_fixed
-                except Exception as fix_err:
-                    logger.warning(f"Self-correction LLM call failed: {fix_err}")
-
-        columns = exec_result.get("columns", [])
-        raw_rows = exec_result.get("rows", [])
-        serialized_rows = [
-            {k: serialize_row(v) for k, v in row.items()}
-            for row in raw_rows
-        ]
-
-        data_summary = compute_data_summary(serialized_rows, columns)
-        chart_data = extract_chart_data(serialized_rows, columns)
-        summary_prompt = build_synthesis_prompt(user_question, serialized_rows, data_summary, history)
-
-        synth_messages = [
-            {"role": "system", "content": SYNTHESIZE_SYSTEM_PROMPT},
-            {"role": "user", "content": summary_prompt}
-        ]
-        
+        serialized_rows, columns, chart_data, synth_messages = _prepare_synthesis_data(exec_result, user_question, history)
         natural_answer = await llm_client.generate_chat_completion(synth_messages, temperature=0.2)
 
         return {
             "answer": natural_answer,
-            "sql": current_sql,
+            "sql": final_sql,
             "columns": columns,
             "rows": serialized_rows,
             "row_count": len(serialized_rows),
             "duration_ms": exec_result.get("duration_ms", 0),
-            "relevant_tables": relevant_tables,
-            "entities": matched_entities,
+            "relevant_tables": ctx.relevant_tables,
+            "entities": ctx.matched_entities,
             "chart": chart_data,
             "error": None
         }
@@ -435,72 +505,13 @@ INSTRUCTIONS:
         stage (retrieval -> sql -> synthesizing) followed by token stream.
         """
         yield {"event": "stage", "data": json.dumps({"stage": "retrieval", "message": "Searching database schema & entities..."})}
-        
-        relevant_tables = vector_store.search_relevant_tables(user_question, top_k=8)
-        matched_entities = vector_store.search_entities(user_question, top_k=8)
-        
-        selected_tables = []
-        for t in relevant_tables:
-            info = TABLE_CATALOG.get(t)
-            t_name = info.get("table_name", t) if info else t
-            if t_name not in selected_tables:
-                selected_tables.append(t_name)
 
-        core_fallback = ["order", "order_item", "product", "product_variant", "stock", "location", "users", "roles", "license"]
-        for c in core_fallback:
-            if len(selected_tables) >= 8:
-                break
-            if c not in selected_tables and c in TABLE_CATALOG:
-                selected_tables.append(c)
-
-        schema_context = get_table_schema_prompt(selected_tables[:8])
-        entity_context = ""
-        if matched_entities:
-            entity_context = "Matched Database Entities:\n" + "\n".join(
-                [f"- {e['type'].upper()} '{e['name']}' (ID: {e['id']})" for e in matched_entities]
-            )
-
-        history_context = ""
-        if history:
-            clean_history = [
-                h for h in history[-6:]
-                if isinstance(h, dict) and h.get("content") and h.get("role") in ("user", "assistant")
-            ]
-            if clean_history:
-                turns = []
-                for h in clean_history:
-                    turn_str = f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content'][:250]}"
-                    if h.get("sql"):
-                        turn_str += f"\n  [Executed SQL]: {h['sql']}"
-                    turns.append(turn_str)
-                history_context = "Recent Conversation History:\n" + "\n".join(turns) + "\n"
-
-        user_prompt = f"""Available Database Schema Context:
-{schema_context}
-
-{entity_context}
-
-{history_context}
-Current User Input: "{user_question}"
-
-INSTRUCTIONS:
-1. If this is a greeting or general inquiry, respond conversationally.
-2. If this is a data question, generate the PostgreSQL query in ```sql ... ```.
-3. If this is a follow-up to a previous question, reuse or extend the previous [Executed SQL]."""
-
-        messages = [
-            {"role": "system", "content": UNIVERSAL_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ]
-
-        llm_output = await llm_client.generate_chat_completion(messages, temperature=0.1)
+        ctx = _build_query_context(user_question, history)
+        llm_output = await llm_client.generate_chat_completion(ctx.messages, temperature=0.1)
         sql_to_run = extract_sql_query(llm_output)
 
         if not sql_to_run:
-            reply_text = llm_output.strip() if llm_output and llm_output.strip() else (
-                "Main aapka sawal samajh nahi paya ya mutaliqa data nahi mil saka. "
-                "Barah-e-karam apna sawal thora wazeh karein ya dobara poochiye."
-            )
+            reply_text = llm_output.strip() if llm_output and llm_output.strip() else DEFAULT_FALLBACK_REPLY
             yield {"event": "stage", "data": json.dumps({"stage": "synthesizing", "message": "Replying..."})}
             yield {"event": "token", "data": json.dumps({"token": reply_text})}
             yield {"event": "done", "data": json.dumps({"sql": "", "columns": [], "row_count": 0, "chart": None})}
@@ -513,103 +524,29 @@ INSTRUCTIONS:
             return
 
         yield {"event": "stage", "data": json.dumps({"stage": "sql", "message": "Executing PostgreSQL query...", "sql": sanitized_sql})}
-        
-        current_sql = sanitized_sql
-        exec_result = None
-        for attempt in range(3):
-            try:
-                exec_result = await db_manager.execute_query(current_sql)
-                if exec_result["success"]:
-                    break
-            except Exception as e:
-                err_str = str(e)
-                logger.warning(f"SQL execution error on stream attempt {attempt+1}: {err_str}")
-                diagnostic_hint = build_sql_error_diagnostic(err_str, current_sql)
-                hint_section = f"\n{diagnostic_hint}\n" if diagnostic_hint else ""
 
-                if attempt == 2:
-                    table_summary = ", ".join(relevant_tables[:4]) if relevant_tables else "database"
-                    fail_msg = (
-                        f"Database query execute nahi ho saki: {err_str}.\n\n"
-                        f"**Suggestions:**\n"
-                        f"- Mutaliqa tables ({table_summary}) mein requested fields direct match nahi huin.\n"
-                        f"- Aap specific filters (e.g. warehouse name, specific SKU ya date range) mention kar ke dobara pooch sakte hain."
-                    )
-                    yield {"event": "token", "data": json.dumps({"token": fail_msg})}
-                    yield {"event": "done", "data": json.dumps({"sql": current_sql, "columns": [], "row_count": 0, "chart": None})}
-                    return
-
-                fix_prompt = (
-                    f"The PostgreSQL query failed with error: {err_str}\n"
-                    f"Faulty SQL: {current_sql}\n"
-                    f"{hint_section}"
-                    f"Fix the query using the schema provided above. "
-                    f"Ensure correct table and column names, proper double quotes on identifiers, "
-                    f"and remember ls.license.configuration is TEXT (use CAST(lic.configuration AS json) ->> 'key'). "
-                    f"Output ONLY the corrected SQL in ```sql ... ```."
-                )
-                try:
-                    fix_messages = [
-                        {"role": "system", "content": UNIVERSAL_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                        {"role": "assistant", "content": f"```sql\n{current_sql}\n```"},
-                        {"role": "user", "content": fix_prompt}
-                    ]
-                    fix_output = await llm_client.generate_chat_completion(fix_messages, temperature=0.05)
-                    corrected = extract_sql_query(fix_output)
-                    if corrected:
-                        valid, s_fix, _ = validate_and_sanitize_sql(corrected)
-                        if valid:
-                            current_sql = s_fix
-                except Exception as fix_err:
-                    logger.warning(f"Self-correction LLM call failed in stream: {fix_err}")
-
-        if not exec_result or not exec_result.get("success"):
-            yield {"event": "token", "data": json.dumps({"token": "Database query could not be executed."})}
-            yield {"event": "done", "data": json.dumps({"sql": current_sql, "columns": [], "row_count": 0, "chart": None})}
+        success, exec_result, final_sql, err_str = await self._execute_sql_with_retry(sanitized_sql, ctx.user_prompt, max_retries=2)
+        if not success or not exec_result:
+            fail_msg = _build_failure_message(err_str, ctx)
+            yield {"event": "token", "data": json.dumps({"token": fail_msg})}
+            yield {"event": "done", "data": json.dumps({"sql": final_sql, "columns": [], "row_count": 0, "chart": None})}
             return
 
-        columns = exec_result.get("columns", [])
-        raw_rows = exec_result.get("rows", [])
-        serialized_rows = [{k: serialize_row(v) for k, v in row.items()} for row in raw_rows]
-
-        data_summary = compute_data_summary(serialized_rows, columns)
-        chart_data = extract_chart_data(serialized_rows, columns)
-        summary_prompt = build_synthesis_prompt(user_question, serialized_rows, data_summary, history)
-
-        synth_messages = [
-            {"role": "system", "content": SYNTHESIZE_SYSTEM_PROMPT},
-            {"role": "user", "content": summary_prompt}
-        ]
+        serialized_rows, columns, chart_data, synth_messages = _prepare_synthesis_data(exec_result, user_question, history)
 
         yield {"event": "stage", "data": json.dumps({"stage": "synthesizing", "message": "Synthesizing answer..."})}
-        
-        token_count = 0
-        async for token in llm_client.stream_chat_completion(synth_messages, temperature=0.2):
-            if token:
-                token_count += 1
-                yield {"event": "token", "data": json.dumps({"token": token})}
 
-        if token_count == 0:
-            logger.warning("Stream produced 0 tokens, falling back to direct synthesis...")
-            try:
-                fallback_answer = await llm_client.generate_chat_completion(synth_messages, temperature=0.2)
-                if fallback_answer and fallback_answer.strip():
-                    yield {"event": "token", "data": json.dumps({"token": fallback_answer.strip()})}
-                else:
-                    yield {"event": "token", "data": json.dumps({"token": f"Aapke sawal ke mutabiq {len(serialized_rows)} records mil gaye hain. Tafseelat Data Table aur CSV export mein mojood hain."})}
-            except Exception as synth_err:
-                logger.error(f"Fallback synthesis error: {synth_err}")
-                yield {"event": "token", "data": json.dumps({"token": f"Aapka data query kamyabi se execute ho gaya hai ({len(serialized_rows)} records). Interactive table mein check karein."})}
+        async for item in _stream_tokens_or_fallback(synth_messages, serialized_rows):
+            yield item
 
         yield {"event": "done", "data": json.dumps({
-            "sql": current_sql,
+            "sql": final_sql,
             "columns": columns,
             "rows": serialized_rows,
             "row_count": len(serialized_rows),
             "duration_ms": exec_result.get("duration_ms", 0),
-            "relevant_tables": relevant_tables,
-            "entities": matched_entities,
+            "relevant_tables": ctx.relevant_tables,
+            "entities": ctx.matched_entities,
             "chart": chart_data
         })}
 
