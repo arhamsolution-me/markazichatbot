@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
 import json
+from typing import Annotated
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,7 +46,7 @@ app = FastAPI(title="Markazi AI Chatbot Core", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,8 +72,16 @@ class ChatResponse(BaseModel):
     chart: dict | None = None
     error: str | None = None
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest, authorization: str | None = Header(None)):
+COMMON_RESPONSES = {
+    400: {"description": "Bad Request - message cannot be empty"},
+    401: {"description": "Unauthorized - invalid API token"},
+}
+
+@app.post("/api/chat", response_model=ChatResponse, responses=COMMON_RESPONSES)
+async def chat_endpoint(
+    req: ChatRequest,
+    authorization: Annotated[str | None, Header()] = None
+):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
     
@@ -101,8 +110,11 @@ async def chat_endpoint(req: ChatRequest, authorization: str | None = Header(Non
             error=str(e)
         )
 
-@app.post("/api/chat/stream")
-async def chat_stream_endpoint(req: ChatRequest, authorization: str | None = Header(None)):
+@app.post("/api/chat/stream", responses=COMMON_RESPONSES)
+async def chat_stream_endpoint(
+    req: ChatRequest,
+    authorization: Annotated[str | None, Header()] = None
+):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
@@ -142,23 +154,23 @@ async def stats_endpoint():
 
     return {
         "status": "healthy",
-        "database": "markazi_qa_is",
+        "database": settings.is_db.name,
         "linked_services": {
             "is": {
                 "name": "Inventory & Operations Hub",
-                "database": "markazi_qa_is",
+                "database": settings.is_db.name,
                 "schema": "public",
                 "tables_count": len(tables_by_schema.get("public", []))
             },
             "us": {
                 "name": "User Management & RBAC Service",
-                "database": "markazi_qa_us",
+                "database": settings.us_db.name,
                 "schema": "us",
                 "tables_count": len(tables_by_schema.get("us", []))
             },
             "ls": {
                 "name": "License & Billing Service",
-                "database": "markazi_qa_ls",
+                "database": settings.ls_db.name,
                 "schema": "ls",
                 "tables_count": len(tables_by_schema.get("ls", []))
             }
@@ -175,8 +187,8 @@ async def trigger_sync():
     await sync_worker.initial_sync()
     return {"status": "success", "message": "Entities re-synchronized with Vector Store."}
 
-@app.get("/")
-async def root():
+@app.get("/assistant")
+async def assistant():
     return {
         "service": "Markazi AI Chatbot Core Microservice",
         "status": "healthy",

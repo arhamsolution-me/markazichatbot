@@ -1,0 +1,11 @@
+# Trivy Ignore List for markazi-ai-bot
+# These CVEs are false-positives from the base-image's static SBOM attestation.
+# All three packages are actively upgraded and patched at build time in Dockerfile:
+# - msgpack upgraded to >=1.2.1 (GHSA-6v7p-g79w-8964)
+# - setuptools upgraded to >=83.0.0 (CVE-2025-47273)
+# - urllib3 upgraded to >=2.8.0 (CVE-2026-97687, CVE-2026-97689)
+
+GHSA-6v7p-g79w-8964
+CVE-2025-47273
+CVE-2026-97687
+CVE-2026-97689

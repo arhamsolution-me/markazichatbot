@@ -19,6 +19,8 @@ class DatabaseManager:
                 conninfo=settings.DB_URL,
                 min_size=settings.DB_MIN_CONNECTIONS,
                 max_size=settings.DB_MAX_CONNECTIONS,
+                max_idle=120.0,
+                check=ConnectionPool.check_connection,
                 kwargs={"row_factory": dict_row}
             )
             logger.info("PostgreSQL Pool is open and ready.")
