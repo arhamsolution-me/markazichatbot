@@ -55,7 +55,8 @@ class VectorStore:
     def get_entity_count(self) -> int:
         try:
             return self.client.get_collection(COLLECTION_ENTITIES).points_count or 0
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Could not retrieve entity collection count: %s", e)
             return 0
 
     def index_schema(self):
@@ -129,7 +130,8 @@ class VectorStore:
                     query=vector,
                     limit=top_k
                 ).points
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                logger.debug("query_points not available, falling back to legacy search: %s", e)
                 results = self.client.search(
                     collection_name=COLLECTION_SCHEMA,
                     query_vector=vector,
@@ -225,7 +227,8 @@ class VectorStore:
                 limit=top_k,
                 score_threshold=score_threshold
             ).points
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            logger.debug("query_points not available, falling back to legacy search: %s", e)
             try:
                 results = self.client.search(
                     collection_name=COLLECTION_ENTITIES,
@@ -233,7 +236,8 @@ class VectorStore:
                     limit=top_k,
                     score_threshold=score_threshold
                 )
-            except Exception:
+            except Exception as search_err:  # noqa: BLE001
+                logger.warning("Entity search failed with both methods: %s", search_err)
                 results = []
 
         matches = []

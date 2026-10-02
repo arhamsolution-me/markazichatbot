@@ -155,8 +155,8 @@ class GroqKeyRotator:
                 delta = chunk["choices"][0]["delta"].get("content", "")
                 if delta:
                     yield delta
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Skipping malformed SSE chunk: %s", e)
 
     async def stream_chat_completion(
         self,
@@ -197,7 +197,8 @@ class GroqKeyRotator:
             except (httpx.TimeoutException, TimeoutError):
                 logger.warning(f"Groq stream request timed out on key ...{key[-8:]}. Retrying...")
                 continue
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Groq stream unexpected error on key ...{key[-8:]}: {e}")
                 if attempts >= max_attempts:
                     raise
                 await asyncio.sleep(0.5)
