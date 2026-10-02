@@ -104,26 +104,12 @@ class Settings:
     us_db: DatabaseConfig = DatabaseConfig.from_env("US")
     ls_db: DatabaseConfig = DatabaseConfig.from_env("LS")
 
-    # DSN connection URLs (for full backward compatibility)
-    @property
-    def DB_URL(self) -> str:
-        return self.is_db.dsn
-
-    @property
-    def RAW_DB_URL(self) -> str:
-        return self.is_db.dsn
-
-    @property
-    def IS_DB_URL(self) -> str:
-        return self.is_db.dsn
-
-    @property
-    def US_DB_URL(self) -> str:
-        return self.us_db.dsn
-
-    @property
-    def LS_DB_URL(self) -> str:
-        return self.ls_db.dsn
+    # DSN connection URLs as class attributes (avoids python:S100 method naming violation)
+    DB_URL: str = is_db.dsn
+    RAW_DB_URL: str = is_db.dsn
+    IS_DB_URL: str = is_db.dsn
+    US_DB_URL: str = us_db.dsn
+    LS_DB_URL: str = ls_db.dsn
 
     # Database Pool Settings
     DB_MIN_CONNECTIONS: int = int(os.getenv("DB_MIN_CONNECTIONS", "2"))
