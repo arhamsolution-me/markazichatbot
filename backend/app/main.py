@@ -154,23 +154,23 @@ async def stats_endpoint():
 
     return {
         "status": "healthy",
-        "database": "omni-is-sap-dev",
+        "database": settings.is_db.name,
         "linked_services": {
             "is": {
                 "name": "Inventory & Operations Hub",
-                "database": "omni-is-sap-dev",
+                "database": settings.is_db.name,
                 "schema": "public",
                 "tables_count": len(tables_by_schema.get("public", []))
             },
             "us": {
                 "name": "User Management & RBAC Service",
-                "database": "omni-us-dev",
+                "database": settings.us_db.name,
                 "schema": "us",
                 "tables_count": len(tables_by_schema.get("us", []))
             },
             "ls": {
                 "name": "License & Billing Service",
-                "database": "omni-ls-dev",
+                "database": settings.ls_db.name,
                 "schema": "ls",
                 "tables_count": len(tables_by_schema.get("ls", []))
             }
