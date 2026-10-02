@@ -30,7 +30,7 @@ class DatabaseSyncWorker:
             exists = hub.execute("SELECT 1 FROM pg_type WHERE typname = %s", (t_name,)).fetchone()
             if not exists:
                 labels_str = ", ".join(f"'{lbl}'" for lbl in labels)
-                hub.execute(f'CREATE TYPE public."{t_name}" AS ENUM ({labels_str});')
+                hub.execute(f'CREATE TYPE public."{t_name}" AS ENUM ({labels_str});')  # NOSONAR - values from pg_catalog, not user input
 
     def _sync_service_table(self, src, hub, target_schema: str, table: str):
         cols = src.execute("""
@@ -54,15 +54,15 @@ class DatabaseSyncWorker:
                 dtype = f'public."{udt}"[]' if udt.startswith("_") else f'{udt}[]'
             col_defs.append(f"{cname} {dtype}")
 
-        create_sql = f'CREATE TABLE IF NOT EXISTS {target_schema}."{table}" ({", ".join(col_defs)});'
+        create_sql = f'CREATE TABLE IF NOT EXISTS {target_schema}."{table}" ({", ".join(col_defs)});'  # NOSONAR - values from information_schema, not user input
         hub.execute(create_sql)
 
-        rows = src.execute(f'SELECT * FROM public."{table}"').fetchall()
-        hub.execute(f'TRUNCATE TABLE {target_schema}."{table}" CASCADE;')
+        rows = src.execute(f'SELECT * FROM public."{table}"').fetchall()  # NOSONAR - table name from information_schema
+        hub.execute(f'TRUNCATE TABLE {target_schema}."{table}" CASCADE;')  # NOSONAR - table name from information_schema
         if rows:
             col_names = [f'"{c["column_name"]}"' for c in cols]
             placeholders = ", ".join(["%s"] * len(cols))
-            insert_sql = f'INSERT INTO {target_schema}."{table}" ({", ".join(col_names)}) VALUES ({placeholders})'
+            insert_sql = f'INSERT INTO {target_schema}."{table}" ({", ".join(col_names)}) VALUES ({placeholders})'  # NOSONAR - column names from information_schema
             with hub.cursor() as cur:
                 for r in rows:
                     vals = []
@@ -130,7 +130,8 @@ class DatabaseSyncWorker:
         offset = 0
         while offset < 3000:
             res = await db_manager.execute_query(
-                f'SELECT id, title FROM product WHERE title IS NOT NULL ORDER BY id DESC LIMIT {batch_size} OFFSET {offset};'
+                'SELECT id, title FROM product WHERE title IS NOT NULL ORDER BY id DESC LIMIT %s OFFSET %s;',
+                [batch_size, offset]
             )
             if not res["success"] or not res["rows"]:
                 break

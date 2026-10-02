@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from pathlib import Path
@@ -43,9 +44,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Markazi AI Chatbot Core", lifespan=lifespan)
 
+ALLOWED_ORIGINS: list[str] = [
+    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()
+] or ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -196,7 +201,6 @@ async def assistant():
     }
 
 if __name__ == "__main__":
-    import os
     import uvicorn
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "6070"))
