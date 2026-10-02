@@ -32,9 +32,19 @@ RUN mkdir -p /app/data/qdrant /app/models/fastembed_cache && \
 COPY --chown=1001:0 backend/requirements.txt /app/requirements.txt
 
 USER 0
+# Upgrade pip/build tools and pin security-fixed versions for Trivy findings:
+#   setuptools >=83.0.0  (CVE-2025-47273 HIGH, CVE-2026-59890 MEDIUM)
+#   msgpack    >=1.2.1   (GHSA-6v7p-g79w-8964 HIGH)
+#   urllib3    >=2.8.0   (CVE-2026-97687 HIGH, CVE-2026-97688 MEDIUM, CVE-2026-97689 HIGH)
 RUN python -m pip install --no-cache-dir --upgrade \
-        pip setuptools wheel && \
-    python -m pip install --no-cache-dir -r requirements.txt
+        pip \
+        "setuptools>=83.0.0" \
+        wheel && \
+    python -m pip install --no-cache-dir -r requirements.txt && \
+    python -m pip install --no-cache-dir --upgrade \
+        "msgpack>=1.2.1" \
+        "urllib3>=2.8.0" \
+        "setuptools>=83.0.0"
 
 # Give the application user access to the installed packages and app files
 RUN chown -R 1001:0 /app
