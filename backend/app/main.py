@@ -82,7 +82,7 @@ COMMON_RESPONSES = {
     401: {"description": "Unauthorized - invalid API token"},
 }
 
-@app.post("/api/chat", response_model=ChatResponse, responses=COMMON_RESPONSES)
+@app.post("/assistant/api/chat", response_model=ChatResponse, responses=COMMON_RESPONSES)
 async def chat_endpoint(
     req: ChatRequest,
     authorization: Annotated[str | None, Header()] = None
@@ -115,7 +115,7 @@ async def chat_endpoint(
             error=str(e)
         )
 
-@app.post("/api/chat/stream", responses=COMMON_RESPONSES)
+@app.post("/assistant/api/chat/stream", responses=COMMON_RESPONSES)
 async def chat_stream_endpoint(
     req: ChatRequest,
     authorization: Annotated[str | None, Header()] = None
@@ -141,7 +141,7 @@ async def chat_stream_endpoint(
 
     return StreamingResponse(sse_event_generator(), media_type="text/event-stream")
 
-@app.get("/api/stats")
+@app.get("/assistant/api/stats")
 async def stats_endpoint():
     res = await db_manager.execute_query("""
         SELECT table_schema, table_name, table_type 
@@ -187,7 +187,7 @@ async def stats_endpoint():
         "model": settings.GROQ_MODEL
     }
 
-@app.post("/api/sync")
+@app.post("/assistant/api/sync")
 async def trigger_sync():
     await sync_worker.initial_sync()
     return {"status": "success", "message": "Entities re-synchronized with Vector Store."}
