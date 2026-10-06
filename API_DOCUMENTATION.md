@@ -2,7 +2,7 @@
 
 This document explains all available backend APIs for the Markazi AI Chatbot Microservice in clear, simple English without any tables.
 
-The default microservice port is **6070**.
+The default microservice port is **6070**, and the base URL prefix for all endpoints is **`/assistant`**.
 
 ---
 
@@ -10,13 +10,13 @@ The default microservice port is **6070**.
 
 These are the primary APIs used by client applications (web, mobile, or third-party services) to communicate with the chatbot.
 
-### 1.1 Standard Chat API (POST `/api/chat`)
+### 1.1 Standard Chat API (POST `/assistant/api/chat`)
 
 * **Purpose:**
   This is the main synchronous input/output API. You send a user question in English or Roman Urdu, and the chatbot generates a read-only PostgreSQL query, executes it safely across the databases, and returns a natural human-like answer along with the raw database rows and optional chart data in a single JSON response.
 
 * **HTTP Method:** `POST`
-* **URL:** `http://<SERVER_IP>:6070/api/chat`
+* **URL:** `http://<SERVER_IP>:6070/assistant/api/chat`
 
 * **Request Headers:**
   * `Content-Type: application/json`
@@ -83,13 +83,13 @@ These are the primary APIs used by client applications (web, mobile, or third-pa
 
 ---
 
-### 1.2 Real-Time Streaming Chat API (POST `/api/chat/stream`)
+### 1.2 Real-Time Streaming Chat API (POST `/assistant/api/chat/stream`)
 
 * **Purpose:**
   This endpoint streams the response word-by-word using Server-Sent Events (SSE). It is ideal for frontend UIs that want a real-time typewriter effect and live step-by-step progress updates (showing when it is searching schema, running SQL, and generating text).
 
 * **HTTP Method:** `POST`
-* **URL:** `http://<SERVER_IP>:6070/api/chat/stream`
+* **URL:** `http://<SERVER_IP>:6070/assistant/api/chat/stream`
 
 * **Request Headers:**
   * `Content-Type: application/json`
@@ -143,13 +143,13 @@ These are the primary APIs used by client applications (web, mobile, or third-pa
 
 ## 2. Diagnostics, Health, and Synchronization APIs
 
-### 2.1 System Health and Multi-Database Stats (GET `/api/stats`)
+### 2.1 System Health and Multi-Database Stats (GET `/assistant/api/stats`)
 
 * **Purpose:**
   Provides a health check and detailed summary of the connected multi-service databases (Inventory Hub, User Management, and Licensing) connected via PostgreSQL Foreign Data Wrapper (FDW), as well as active Groq keys and configured LLM models.
 
 * **HTTP Method:** `GET`
-* **URL:** `http://<SERVER_IP>:6070/api/stats`
+* **URL:** `http://<SERVER_IP>:6070/assistant/api/stats`
 
 * **Input:** None (No query parameters or request body required).
 
@@ -202,13 +202,13 @@ These are the primary APIs used by client applications (web, mobile, or third-pa
 
 ---
 
-### 2.2 On-Demand Entity Sync (POST `/api/sync`)
+### 2.2 On-Demand Entity Sync (POST `/assistant/api/sync`)
 
 * **Purpose:**
   Triggers an immediate background synchronization of database entities (channels, couriers, active warehouse locations, products, user accounts, and roles) into the Qdrant Vector Store. Use this endpoint whenever new products or warehouses are added to the database so the AI recognizes them instantly without restarting the server.
 
 * **HTTP Method:** `POST`
-* **URL:** `http://<SERVER_IP>:6070/api/sync`
+* **URL:** `http://<SERVER_IP>:6070/assistant/api/sync`
 
 * **Input:** None (No body required).
 

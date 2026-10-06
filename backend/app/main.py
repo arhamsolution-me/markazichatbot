@@ -5,7 +5,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 import json
 from typing import Annotated
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, APIRouter
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -82,7 +82,9 @@ COMMON_RESPONSES = {
     401: {"description": "Unauthorized - invalid API token"},
 }
 
-@app.post("/assistant/api/chat", response_model=ChatResponse, responses=COMMON_RESPONSES)
+router = APIRouter(prefix="/assistant")
+
+@router.post("/api/chat", response_model=ChatResponse, responses=COMMON_RESPONSES)
 async def chat_endpoint(
     req: ChatRequest,
     authorization: Annotated[str | None, Header()] = None
@@ -115,7 +117,7 @@ async def chat_endpoint(
             error=str(e)
         )
 
-@app.post("/assistant/api/chat/stream", responses=COMMON_RESPONSES)
+@router.post("/api/chat/stream", responses=COMMON_RESPONSES)
 async def chat_stream_endpoint(
     req: ChatRequest,
     authorization: Annotated[str | None, Header()] = None
@@ -141,7 +143,7 @@ async def chat_stream_endpoint(
 
     return StreamingResponse(sse_event_generator(), media_type="text/event-stream")
 
-@app.get("/assistant/api/stats")
+@router.get("/api/stats")
 async def stats_endpoint():
     res = await db_manager.execute_query("""
         SELECT table_schema, table_name, table_type 
@@ -187,13 +189,24 @@ async def stats_endpoint():
         "model": settings.GROQ_MODEL
     }
 
-@app.post("/assistant/api/sync")
+@router.post("/api/sync")
 async def trigger_sync():
     await sync_worker.initial_sync()
     return {"status": "success", "message": "Entities re-synchronized with Vector Store."}
 
-@app.get("/assistant")
-async def assistant():
+@router.get("")
+@router.get("/")
+async def assistant_status():
+    return {
+        "service": "Markazi AI Chatbot Core Microservice",
+        "status": "healthy",
+        "version": "1.0.0"
+    }
+
+app.include_router(router)
+
+@app.get("/")
+async def root():
     return {
         "service": "Markazi AI Chatbot Core Microservice",
         "status": "healthy",
